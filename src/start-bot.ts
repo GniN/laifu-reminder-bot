@@ -43,13 +43,13 @@ async function start(): Promise<void> {
     // Commands
     let commands: Command[] = [
         // Chat Commands
-        new HelpCommand(),
-        new InfoCommand(),
-        new TestCommand(),
+        // new HelpCommand(),
+        // new InfoCommand(),
+        // new TestCommand(),
         // User Context Commands
-        new ViewDateJoined(),
+        // new ViewDateJoined(),
         // Message Context Commands
-        new ViewDateSent(),
+        // new ViewDateSent(),
         // TODO: Add new commands here
     ].sort((a, b) => (a.metadata.name > b.metadata.name ? 1 : -1));
 

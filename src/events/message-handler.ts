@@ -11,6 +11,16 @@ export class MessageHandler implements EventHandler {
             return;
         }
 
+        if (msg.embeds[0]?.title === 'Case File Opened' && msg.reference) {
+            // getting user id from profile img link
+            const userId = msg.embeds[0].author.iconURL.split('/')[4]
+
+            setTimeout(() => {
+                let toSend = `<@${userId}> time to drop`;
+                msg.channel.send(toSend);
+            }, 6 * 60 * 1000);
+        }
+
         // Process trigger
         await this.triggerHandler.process(msg);
     }
