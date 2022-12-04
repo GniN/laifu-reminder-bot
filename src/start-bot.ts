@@ -1,10 +1,15 @@
 import { REST } from '@discordjs/rest';
-import { Options } from 'discord.js';
+import { Options, Partials } from 'discord.js';
 import { createRequire } from 'node:module';
 
 import { Button } from './buttons/index.js';
 import { HelpCommand, InfoCommand, TestCommand } from './commands/chat/index.js';
-import { Command } from './commands/index.js';
+import {
+    ChatCommandMetadata,
+    Command,
+    MessageCommandMetadata,
+    UserCommandMetadata,
+} from './commands/index.js';
 import { ViewDateSent } from './commands/message/index.js';
 import { ViewDateJoined } from './commands/user/index.js';
 import {
@@ -20,7 +25,12 @@ import { CustomClient } from './extensions/index.js';
 import { Job } from './jobs/index.js';
 import { Bot } from './models/bot.js';
 import { Reaction } from './reactions/index.js';
-import { CommandRegistrationService, JobService, Logger } from './services/index.js';
+import {
+    CommandRegistrationService,
+    EventDataService,
+    JobService,
+    Logger,
+} from './services/index.js';
 import { Trigger } from './triggers/index.js';
 
 const require = createRequire(import.meta.url);
@@ -28,13 +38,16 @@ let Config = require('../config/config.json');
 let Logs = require('../lang/logs.json');
 
 async function start(): Promise<void> {
+    // Services
+    let eventDataService = new EventDataService();
+
     // Client
     let client = new CustomClient({
         intents: Config.client.intents,
-        partials: Config.client.partials,
+        partials: (Config.client.partials as string[]).map(partial => Partials[partial]),
         makeCache: Options.cacheWithLimits({
             // Keep default caching behavior
-            ...Options.defaultMakeCacheSettings,
+            ...Options.DefaultMakeCacheSettings,
             // Override specific options from config
             ...Config.client.caches,
         }),
@@ -42,16 +55,19 @@ async function start(): Promise<void> {
 
     // Commands
     let commands: Command[] = [
-        // Chat Commands
+        // // Chat Commands
         // new HelpCommand(),
         // new InfoCommand(),
         // new TestCommand(),
-        // User Context Commands
-        // new ViewDateJoined(),
-        // Message Context Commands
+
+        // // Message Context Commands
         // new ViewDateSent(),
+
+        // // User Context Commands
+        // new ViewDateJoined(),
+
         // TODO: Add new commands here
-    ].sort((a, b) => (a.metadata.name > b.metadata.name ? 1 : -1));
+    ];
 
     // Buttons
     let buttons: Button[] = [
@@ -69,13 +85,13 @@ async function start(): Promise<void> {
     ];
 
     // Event handlers
-    let guildJoinHandler = new GuildJoinHandler();
+    let guildJoinHandler = new GuildJoinHandler(eventDataService);
     let guildLeaveHandler = new GuildLeaveHandler();
-    let commandHandler = new CommandHandler(commands);
-    let buttonHandler = new ButtonHandler(buttons);
-    let triggerHandler = new TriggerHandler(triggers);
+    let commandHandler = new CommandHandler(commands, eventDataService);
+    let buttonHandler = new ButtonHandler(buttons, eventDataService);
+    let triggerHandler = new TriggerHandler(triggers, eventDataService);
     let messageHandler = new MessageHandler(triggerHandler);
-    let reactionHandler = new ReactionHandler(reactions);
+    let reactionHandler = new ReactionHandler(reactions, eventDataService);
 
     // Jobs
     let jobs: Job[] = [
@@ -100,11 +116,17 @@ async function start(): Promise<void> {
         try {
             let rest = new REST({ version: '10' }).setToken(Config.client.token);
             let commandRegistrationService = new CommandRegistrationService(rest);
-            let localCmds = commands.map(cmd => cmd.metadata);
+            let localCmds = [
+                ...Object.values(ChatCommandMetadata).sort((a, b) => (a.name > b.name ? 1 : -1)),
+                ...Object.values(MessageCommandMetadata).sort((a, b) => (a.name > b.name ? 1 : -1)),
+                ...Object.values(UserCommandMetadata).sort((a, b) => (a.name > b.name ? 1 : -1)),
+            ];
             await commandRegistrationService.process(localCmds, process.argv);
         } catch (error) {
             Logger.error(Logs.error.commandAction, error);
         }
+        // Wait for any final logs to be written.
+        await new Promise(resolve => setTimeout(resolve, 1000));
         process.exit();
     }
 

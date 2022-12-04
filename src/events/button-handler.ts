@@ -1,9 +1,9 @@
-import { ButtonInteraction, Message } from 'discord.js';
+import { ButtonInteraction } from 'discord.js';
 import { RateLimiter } from 'discord.js-rate-limiter';
 import { createRequire } from 'node:module';
 
 import { Button, ButtonDeferType } from '../buttons/index.js';
-import { EventData } from '../models/internal-models.js';
+import { EventDataService } from '../services/index.js';
 import { InteractionUtils } from '../utils/index.js';
 import { EventHandler } from './index.js';
 
@@ -16,9 +16,9 @@ export class ButtonHandler implements EventHandler {
         Config.rateLimiting.buttons.interval * 1000
     );
 
-    constructor(private buttons: Button[]) {}
+    constructor(private buttons: Button[], private eventDataService: EventDataService) {}
 
-    public async process(intr: ButtonInteraction, msg: Message): Promise<void> {
+    public async process(intr: ButtonInteraction): Promise<void> {
         // Don't respond to self, or other bots
         if (intr.user.id === intr.client.user?.id || intr.user.bot) {
             return;
@@ -41,7 +41,10 @@ export class ButtonHandler implements EventHandler {
         }
 
         // Check if the embeds author equals the users tag
-        if (button.requireEmbedAuthorTag && msg.embeds[0]?.author?.name !== intr.user.tag) {
+        if (
+            button.requireEmbedAuthorTag &&
+            intr.message.embeds[0]?.author?.name !== intr.user.tag
+        ) {
             return;
         }
 
@@ -64,10 +67,14 @@ export class ButtonHandler implements EventHandler {
         }
 
         // Get data from database
-        let data = await new EventData().initialize(intr.guild);
+        let data = await this.eventDataService.create({
+            user: intr.user,
+            channel: intr.channel,
+            guild: intr.guild,
+        });
 
         // Execute the button
-        await button.execute(intr, msg, data);
+        await button.execute(intr, data);
     }
 
     private findButton(id: string): Button {

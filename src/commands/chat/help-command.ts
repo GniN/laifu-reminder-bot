@@ -1,50 +1,55 @@
-import {
-    ApplicationCommandType,
-    RESTPostAPIChatInputApplicationCommandsJSONBody,
-} from 'discord-api-types/v10';
-import { CommandInteraction, MessageEmbed, PermissionString } from 'discord.js';
+import { ChatInputCommandInteraction, EmbedBuilder, PermissionsString } from 'discord.js';
 
-import { ChatArgs } from '../../constants/index.js';
 import { HelpOption } from '../../enums/index.js';
 import { Language } from '../../models/enum-helpers/index.js';
 import { EventData } from '../../models/internal-models.js';
 import { Lang } from '../../services/index.js';
-import { InteractionUtils } from '../../utils/index.js';
+import { ClientUtils, FormatUtils, InteractionUtils } from '../../utils/index.js';
 import { Command, CommandDeferType } from '../index.js';
 
 export class HelpCommand implements Command {
-    public metadata: RESTPostAPIChatInputApplicationCommandsJSONBody = {
-        type: ApplicationCommandType.ChatInput,
-        name: Lang.getRef('chatCommands.help', Language.Default),
-        name_localizations: Lang.getRefLocalizationMap('chatCommands.help'),
-        description: Lang.getRef('commandDescs.help', Language.Default),
-        description_localizations: Lang.getRefLocalizationMap('commandDescs.help'),
-        dm_permission: true,
-        default_member_permissions: undefined,
-        options: [
-            {
-                ...ChatArgs.HELP_OPTION,
-                required: true,
-            },
-        ],
-    };
+    public names = [Lang.getRef('chatCommands.help', Language.Default)];
     public deferType = CommandDeferType.PUBLIC;
-    public requireClientPerms: PermissionString[] = [];
-    public async execute(intr: CommandInteraction, data: EventData): Promise<void> {
-        let option = intr.options.getString(Lang.getRef('arguments.option', Language.Default));
+    public requireClientPerms: PermissionsString[] = [];
+    public async execute(intr: ChatInputCommandInteraction, data: EventData): Promise<void> {
+        let args = {
+            option: intr.options.getString(
+                Lang.getRef('arguments.option', Language.Default)
+            ) as HelpOption,
+        };
 
-        let embed: MessageEmbed;
-        switch (option) {
+        let embed: EmbedBuilder;
+        switch (args.option) {
             case HelpOption.COMMANDS: {
-                embed = Lang.getEmbed('displayEmbeds.commands', data.lang());
+                embed = Lang.getEmbed('displayEmbeds.commands', data.lang, {
+                    CMD_LINK_TEST: FormatUtils.commandMention(
+                        await ClientUtils.findAppCommand(
+                            intr.client,
+                            Lang.getRef('chatCommands.test', Language.Default)
+                        )
+                    ),
+                    CMD_LINK_INFO: FormatUtils.commandMention(
+                        await ClientUtils.findAppCommand(
+                            intr.client,
+                            Lang.getRef('chatCommands.info', Language.Default)
+                        )
+                    ),
+                });
                 break;
             }
             case HelpOption.PERMISSIONS: {
-                embed = Lang.getEmbed('displayEmbeds.permissions', data.lang());
+                embed = Lang.getEmbed('displayEmbeds.permissions', data.lang);
                 break;
             }
             case HelpOption.FAQ: {
-                embed = Lang.getEmbed('displayEmbeds.faq', data.lang());
+                embed = Lang.getEmbed('displayEmbeds.faq', data.lang, {
+                    CMD_LINK_HELP: FormatUtils.commandMention(
+                        await ClientUtils.findAppCommand(
+                            intr.client,
+                            Lang.getRef('chatCommands.help', Language.Default)
+                        )
+                    ),
+                });
                 break;
             }
             default: {

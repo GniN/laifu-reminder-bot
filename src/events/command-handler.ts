@@ -1,6 +1,7 @@
 import {
     AutocompleteInteraction,
-    BaseCommandInteraction,
+    ChatInputCommandInteraction,
+    CommandInteraction,
     NewsChannel,
     TextChannel,
     ThreadChannel,
@@ -9,8 +10,9 @@ import { RateLimiter } from 'discord.js-rate-limiter';
 import { createRequire } from 'node:module';
 
 import { Command, CommandDeferType } from '../commands/index.js';
+import { DiscordLimits } from '../constants/index.js';
 import { EventData } from '../models/internal-models.js';
-import { Lang, Logger } from '../services/index.js';
+import { EventDataService, Lang, Logger } from '../services/index.js';
 import { CommandUtils, InteractionUtils } from '../utils/index.js';
 import { EventHandler } from './index.js';
 
@@ -24,40 +26,52 @@ export class CommandHandler implements EventHandler {
         Config.rateLimiting.commands.interval * 1000
     );
 
-    constructor(public commands: Command[]) {}
+    constructor(public commands: Command[], private eventDataService: EventDataService) {}
 
-    public async process(intr: BaseCommandInteraction | AutocompleteInteraction): Promise<void> {
+    public async process(intr: CommandInteraction | AutocompleteInteraction): Promise<void> {
         // Don't respond to self, or other bots
         if (intr.user.id === intr.client.user?.id || intr.user.bot) {
             return;
         }
 
+        let commandParts =
+            intr instanceof ChatInputCommandInteraction || intr instanceof AutocompleteInteraction
+                ? [
+                      intr.commandName,
+                      intr.options.getSubcommandGroup(false),
+                      intr.options.getSubcommand(false),
+                  ].filter(Boolean)
+                : [intr.commandName];
+        let commandName = commandParts.join(' ');
+
         // Try to find the command the user wants
-        let command = this.commands.find(command => command.metadata.name === intr.commandName);
+        let command = CommandUtils.findCommand(this.commands, commandParts);
         if (!command) {
             Logger.error(
                 Logs.error.commandNotFound
                     .replaceAll('{INTERACTION_ID}', intr.id)
-                    .replaceAll('{COMMAND_NAME}', intr.commandName)
+                    .replaceAll('{COMMAND_NAME}', commandName)
             );
             return;
         }
 
         if (intr instanceof AutocompleteInteraction) {
-            let option = intr.options.getFocused(true);
-
             if (!command.autocomplete) {
                 Logger.error(
                     Logs.error.autocompleteNotFound
                         .replaceAll('{INTERACTION_ID}', intr.id)
-                        .replaceAll('{COMMAND_NAME}', intr.commandName)
-                        .replaceAll('{OPTION_NAME}', option.name)
+                        .replaceAll('{COMMAND_NAME}', commandName)
                 );
                 return;
             }
 
             try {
-                await command.autocomplete(intr, option);
+                let option = intr.options.getFocused(true);
+                let choices = await command.autocomplete(intr, option);
+                await InteractionUtils.respond(
+                    intr,
+                    choices?.slice(0, DiscordLimits.CHOICES_PER_AUTOCOMPLETE)
+                );
             } catch (error) {
                 Logger.error(
                     intr.channel instanceof TextChannel ||
@@ -65,8 +79,8 @@ export class CommandHandler implements EventHandler {
                         intr.channel instanceof ThreadChannel
                         ? Logs.error.autocompleteGuild
                               .replaceAll('{INTERACTION_ID}', intr.id)
-                              .replaceAll('{COMMAND_NAME}', command.metadata.name)
-                              .replaceAll('{OPTION_NAME}', option.name)
+                              .replaceAll('{OPTION_NAME}', commandName)
+                              .replaceAll('{COMMAND_NAME}', commandName)
                               .replaceAll('{USER_TAG}', intr.user.tag)
                               .replaceAll('{USER_ID}', intr.user.id)
                               .replaceAll('{CHANNEL_NAME}', intr.channel.name)
@@ -75,8 +89,8 @@ export class CommandHandler implements EventHandler {
                               .replaceAll('{GUILD_ID}', intr.guild?.id)
                         : Logs.error.autocompleteOther
                               .replaceAll('{INTERACTION_ID}', intr.id)
-                              .replaceAll('{COMMAND_NAME}', command.metadata.name)
-                              .replaceAll('{OPTION_NAME}', option.name)
+                              .replaceAll('{OPTION_NAME}', commandName)
+                              .replaceAll('{COMMAND_NAME}', commandName)
                               .replaceAll('{USER_TAG}', intr.user.tag)
                               .replaceAll('{USER_ID}', intr.user.id),
                     error
@@ -110,7 +124,12 @@ export class CommandHandler implements EventHandler {
         }
 
         // Get data from database
-        let data = await new EventData().initialize(intr.guild);
+        let data = await this.eventDataService.create({
+            user: intr.user,
+            channel: intr.channel,
+            guild: intr.guild,
+            args: intr instanceof ChatInputCommandInteraction ? intr.options : undefined,
+        });
 
         try {
             // Check if interaction passes command checks
@@ -129,7 +148,7 @@ export class CommandHandler implements EventHandler {
                     intr.channel instanceof ThreadChannel
                     ? Logs.error.commandGuild
                           .replaceAll('{INTERACTION_ID}', intr.id)
-                          .replaceAll('{COMMAND_NAME}', command.metadata.name)
+                          .replaceAll('{COMMAND_NAME}', commandName)
                           .replaceAll('{USER_TAG}', intr.user.tag)
                           .replaceAll('{USER_ID}', intr.user.id)
                           .replaceAll('{CHANNEL_NAME}', intr.channel.name)
@@ -138,7 +157,7 @@ export class CommandHandler implements EventHandler {
                           .replaceAll('{GUILD_ID}', intr.guild?.id)
                     : Logs.error.commandOther
                           .replaceAll('{INTERACTION_ID}', intr.id)
-                          .replaceAll('{COMMAND_NAME}', command.metadata.name)
+                          .replaceAll('{COMMAND_NAME}', commandName)
                           .replaceAll('{USER_TAG}', intr.user.tag)
                           .replaceAll('{USER_ID}', intr.user.id),
                 error
@@ -146,13 +165,13 @@ export class CommandHandler implements EventHandler {
         }
     }
 
-    private async sendError(intr: BaseCommandInteraction, data: EventData): Promise<void> {
+    private async sendError(intr: CommandInteraction, data: EventData): Promise<void> {
         try {
             await InteractionUtils.send(
                 intr,
-                Lang.getEmbed('errorEmbeds.command', data.lang(), {
+                Lang.getEmbed('errorEmbeds.command', data.lang, {
                     ERROR_CODE: intr.id,
-                    GUILD_ID: intr.guild?.id ?? Lang.getRef('other.na', data.lang()),
+                    GUILD_ID: intr.guild?.id ?? Lang.getRef('other.na', data.lang),
                     SHARD_ID: (intr.guild?.shardId ?? 0).toString(),
                 })
             );
